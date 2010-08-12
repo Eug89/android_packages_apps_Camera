@@ -29,12 +29,9 @@ public class CameraHeadUpDisplay extends HeadUpDisplay {
 
     private OtherSettingsIndicator mOtherSettings;
     private GpsIndicator mGpsIndicator;
-    private ZoomIndicator mZoomIndicator;
-    private boolean mZoomSupported;
-    
+
     public CameraHeadUpDisplay(Context context, boolean zoomSupported) {
-        super(context);
-        mZoomSupported = zoomSupported;
+        super(context, zoomSupported);
     }
 
     @Override
@@ -46,8 +43,6 @@ public class CameraHeadUpDisplay extends HeadUpDisplay {
                 CameraSettings.KEY_FOCUS_MODE,
                 CameraSettings.KEY_EXPOSURE,
                 CameraSettings.KEY_SCENE_MODE,
-                CameraSettings.KEY_PICTURE_SIZE,
-                CameraSettings.KEY_JPEG_QUALITY,
                 CameraSettings.KEY_COLOR_EFFECT,
                 CameraSettings.KEY_ISO,
                 CameraSettings.KEY_LENSSHADING,
@@ -56,7 +51,9 @@ public class CameraHeadUpDisplay extends HeadUpDisplay {
                 CameraSettings.KEY_BRIGHTNESS,
                 CameraSettings.KEY_SATURATION,
                 CameraSettings.KEY_CONTRAST,
-                CameraSettings.KEY_SHARPNESS);
+                CameraSettings.KEY_SHARPNESS,
+                CameraSettings.KEY_PICTURE_SIZE,
+                CameraSettings.KEY_JPEG_QUALITY);
 
         mOtherSettings = new OtherSettingsIndicator(context, prefs);
         mOtherSettings.setOnRestorePreferencesClickedRunner(new Runnable() {
@@ -82,14 +79,6 @@ public class CameraHeadUpDisplay extends HeadUpDisplay {
         }
     }
 
-    public void setZoomListener(ZoomController.ZoomListener listener) {
-        mZoomIndicator.setZoomListener(listener);
-    }
-
-    public void setZoomIndex(int index) {
-        mZoomIndicator.setZoomIndex(index);
-    }
-
     public void setGpsHasSignal(final boolean hasSignal) {
         GLRootView root = getGLRootView();
         if (root != null) {
@@ -103,7 +92,4 @@ public class CameraHeadUpDisplay extends HeadUpDisplay {
         }
     }
 
-    public void setZoomRatios(float[] zoomRatios) {
-        mZoomIndicator.setZoomRatios(zoomRatios);
-    }
 }

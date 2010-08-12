@@ -51,25 +51,20 @@ import android.media.ToneGenerator;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Debug;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Message;
 import android.os.MessageQueue;
-import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.provider.Settings;
-import android.text.format.DateFormat;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.Display;
-import android.view.GestureDetector;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MenuItem.OnMenuItemClickListener;
-import android.view.MotionEvent;
 import android.view.OrientationEventListener;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -94,9 +89,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 
 /** The Camera activity which can preview and take pictures. */
-public class Camera extends NoSearchActivity implements View.OnClickListener,
-        ShutterButton.OnShutterButtonListener, SurfaceHolder.Callback,
-        Switcher.OnSwitchListener {
+public class Camera extends BaseCamera {
 
     private static final String TAG = "camera";
 
@@ -123,18 +116,6 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
     private static final int SCREEN_DELAY = 1000;
     private static final int FOCUS_BEEP_VOLUME = 100;
 
-
-    private static final int ZOOM_STOPPED = 0;
-    private static final int ZOOM_START = 1;
-    private static final int ZOOM_STOPPING = 2;
-
-    private int mZoomState = ZOOM_STOPPED;
-    private boolean mSmoothZoomSupported = false;
-    private int mZoomValue;  // The current zoom value.
-    private int mZoomMax;
-    private int mTargetZoomValue;
-
-    private Parameters mParameters;
     private Parameters mInitialParams;
 
     private OrientationEventListener mOrientationListener;
@@ -150,14 +131,12 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
     private int mStatus = IDLE;
     private static final String sTempCropFilename = "crop-temp";
 
-    private android.hardware.Camera mCameraDevice;
     private ContentProviderClient mMediaProviderClient;
     private SurfaceView mSurfaceView;
     private SurfaceHolder mSurfaceHolder = null;
     private ShutterButton mShutterButton;
     private FocusRectangle mFocusRectangle;
     private ToneGenerator mFocusToneGenerator;
-    private GestureDetector mGestureDetector;
     private Switcher mSwitcher;
     private boolean mStartPreviewFail = false;
     private CountDownLatch devlatch;
@@ -202,7 +181,7 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
             new RawPictureCallback();
     private final AutoFocusCallback mAutoFocusCallback =
             new AutoFocusCallback();
-    private final ZoomListener mZoomListener = new ZoomListener();
+
     // Use the ErrorCallback to capture the crash count
     // on the mediaserver
     private final ErrorCallback mErrorCallback = new ErrorCallback();
@@ -232,9 +211,8 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
 
     private final Handler mHandler = new MainHandler();
     private boolean mQuickCapture;
-    private CameraHeadUpDisplay mHeadUpDisplay;
     private Menu mOptionsMenu;
-    
+
     private int mImageWidth = 0;
     private int mImageHeight = 0;
 
@@ -425,19 +403,7 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
         changeHeadUpDisplayState();
     }
 
-    private void initializeZoom() {
-        if (!mParameters.isZoomSupported()) return;
-
-        // Maximum zoom value may change after preview size is set. Get the
-        // latest parameters here.
-        mZoomMax = mParameters.getMaxZoom();
-        mSmoothZoomSupported = mParameters.isSmoothZoomSupported();
-        mGestureDetector = new GestureDetector(this, new ZoomGestureListener());
-
-        mCameraDevice.setZoomChangeListener(mZoomListener);
-    }
-
-    private void onZoomValueChanged(int index) {
+    protected void onZoomValueChanged(int index) {
         if (mSmoothZoomSupported) {
             if (mTargetZoomValue != index && mZoomState != ZOOM_STOPPED) {
                 mTargetZoomValue = index;
@@ -454,63 +420,6 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
             mZoomValue = index;
             setCameraParametersWhenIdle(UPDATE_PARAM_ZOOM);
         }
-    }
-
-    private float[] getZoomRatios() {
-        List<Integer> zoomRatios = mParameters.getZoomRatios();
-        if (mParameters.get("taking-picture-zoom") != null) {
-            // HTC camera zoom
-            float result[] = new float[mZoomMax + 1];
-            for (int i = 0, n = result.length; i < n; ++i) {
-                result[i] = 1 + i * 0.2f;
-            }
-            return result;
-        } else if (zoomRatios != null) {
-            float result[] = new float[zoomRatios.size()];
-            for (int i = 0, n = result.length; i < n; ++i) {
-                result[i] = (float) zoomRatios.get(i) / 100f;
-            }
-            return result;
-            
-        }
-        
-        float[] result = new float[1];
-        result[0] = 0.0f;
-        return result;
-    }
-
-    private class ZoomGestureListener extends
-            GestureDetector.SimpleOnGestureListener {
-
-        @Override
-        public boolean onDoubleTap(MotionEvent e) {
-            // Perform zoom only when preview is started and snapshot is not in
-            // progress.
-            if (mPausing || !isCameraIdle() || !mPreviewing
-                    || mHeadUpDisplay == null || mZoomState != ZOOM_STOPPED) {
-                return false;
-            }
-
-            if (mZoomValue < mZoomMax) {
-                // Zoom in to the maximum.
-                mZoomValue = mZoomMax;
-            } else {
-                mZoomValue = 0;
-            }
-
-            setCameraParametersWhenIdle(UPDATE_PARAM_ZOOM);
-
-            mHeadUpDisplay.setZoomIndex(mZoomValue);
-            return true;
-        }
-    }
-
-    @Override
-    public boolean dispatchTouchEvent(MotionEvent m) {
-        if (!super.dispatchTouchEvent(m) && mGestureDetector != null) {
-            return mGestureDetector.onTouchEvent(m);
-        }
-        return true;
     }
 
     LocationListener [] mLocationListeners = new LocationListener[] {
@@ -557,7 +466,7 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
             if (mRecordLocation
                     && LocationManager.GPS_PROVIDER.equals(mProvider)) {
                 if (mHeadUpDisplay != null) {
-                    mHeadUpDisplay.setGpsHasSignal(true);
+                    ((CameraHeadUpDisplay)mHeadUpDisplay).setGpsHasSignal(true);
                 }
             }
             mLastLocation.set(newLocation);
@@ -580,7 +489,7 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
                     if (mRecordLocation &&
                             LocationManager.GPS_PROVIDER.equals(provider)) {
                         if (mHeadUpDisplay != null) {
-                            mHeadUpDisplay.setGpsHasSignal(false);
+                            ((CameraHeadUpDisplay)mHeadUpDisplay).setGpsHasSignal(false);
                         }
                     }
                     break;
@@ -735,28 +644,6 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
         }
     }
 
-    private final class ZoomListener
-            implements android.hardware.Camera.OnZoomChangeListener {
-        public void onZoomChange(
-                int value, boolean stopped, android.hardware.Camera camera) {
-            Log.v(TAG, "Zoom changed: value=" + value + ". stopped="+ stopped);
-            mZoomValue = value;
-            // Keep mParameters up to date. We do not getParameter again in
-            // takePicture. If we do not do this, wrong zoom value will be set.
-            mParameters.setZoom(value);
-            // We only care if the zoom is stopped. mZooming is set to true when
-            // we start smooth zoom.
-            if (stopped && mZoomState != ZOOM_STOPPED) {
-                if (value != mTargetZoomValue) {
-                    mCameraDevice.startSmoothZoom(mTargetZoomValue);
-                    mZoomState = ZOOM_START;
-                } else {
-                    mZoomState = ZOOM_STOPPED;
-                }
-            }
-        }
-    }
-
     private class ImageCapture {
 
         private Uri mLastContentUri;
@@ -832,44 +719,18 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
             mParameters.setGpsTimestamp(System.currentTimeMillis() / 1000);
 
             // Set GPS location.
-            Location loc = null;
-            if (mRecordLocation) {
-                loc = getCurrentLocation();
-            }
-
+            Location loc = mRecordLocation ? getCurrentLocation() : null;
             if (loc != null) {
                 double lat = loc.getLatitude();
                 double lon = loc.getLongitude();
                 boolean hasLatLon = (lat != 0.0d) || (lon != 0.0d);
-                Log.v(TAG, "in capture lat = " + lat + " lon = " + lon);
 
                 if (hasLatLon) {
-                    String latRef= "N";
-                    String lonRef= "E";
-                    if(lat < 0) {
-                        latRef = "S";
-                        lat *= -1;
-                    }
-                    if (lon < 0) {
-                        lonRef = "W";
-                        lon *= -1;
-                    }
-                    mParameters.setGpsLatitudeRef(latRef);
                     mParameters.setGpsLatitude(lat);
-                    mParameters.setGpsLongitudeRef(lonRef);
                     mParameters.setGpsLongitude(lon);
                     mParameters.setGpsProcessingMethod(loc.getProvider().toUpperCase());
                     if (loc.hasAltitude()) {
-                        Double altitude = loc.getAltitude();
-                        Double altitudeX1000 = altitude * 1000;
-                        long altitudeDividend = altitudeX1000.longValue();
-                        if(altitudeDividend < 0) {
-                            altitudeDividend *= -1;
-                            mParameters.setGpsAltitudeRef(1);
-                    }
-                        else
-                            mParameters.setGpsAltitudeRef(0);
-                        mParameters.setGpsAltitude(altitude);
+                        mParameters.setGpsAltitude(loc.getAltitude());
                     } else {
                         // for NETWORK_PROVIDER location provider, we may have
                         // no altitude information, but the driver needs it, so
@@ -886,12 +747,7 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
                     loc = null;
                 }
             }
-            long dateTaken = System.currentTimeMillis();
-            if (dateTaken != 0) {
-                String datetime = DateFormat.format("yyyy:MM:dd kk:mm:ss", dateTaken).toString();
-                Log.e(TAG,"datetime : " +  datetime);
-                mParameters.setExifDateTime(datetime);
-            }
+
             mCameraDevice.setParameters(mParameters);
 
             Size pictureSize = mParameters.getPictureSize();
@@ -1123,7 +979,7 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
     }
 
     private void finalizeHeadUpDisplay() {
-        mHeadUpDisplay.setGpsHasSignal(false);
+        ((CameraHeadUpDisplay)mHeadUpDisplay).setGpsHasSignal(false);
         mHeadUpDisplay.collapse();
         ((ViewGroup) mGLRootView.getParent()).removeView(mGLRootView);
         mGLRootView = null;
@@ -1737,9 +1593,6 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
         setPreviewDisplay(mSurfaceHolder);
         setCameraParameters(UPDATE_PARAM_ALL);
 
-        final long wallTimeStart = SystemClock.elapsedRealtime();
-        final long threadTimeStart = Debug.threadCpuTimeNanos();
-
         mCameraDevice.setErrorCallback(mErrorCallback);
 
         try {
@@ -2026,15 +1879,6 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
                 }
             }
 
-            //Clearing previous GPS data if any
-            if(mRecordLocation) {
-                //Reset the values when store location is selected
-                mParameters.setGpsLatitude(0);
-                mParameters.setGpsLongitude(0);
-                mParameters.setGpsAltitude(0);
-                mParameters.setGpsTimestamp(0);
-            }
-
             // Set focus mode.
             mFocusMode = mPreferences.getString(
                     CameraSettings.KEY_FOCUS_MODE,
@@ -2071,9 +1915,9 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
                 updateCameraParametersPreference();
             }
         }
-        
+
         CameraSettings.setCamMode(mParameters, CameraSettings.CAMERA_MODE);
-        Log.d(TAG, mParameters.flatten());
+        CameraSettings.dumpParameters(mParameters);
         mCameraDevice.setParameters(mParameters);
     }
 
@@ -2261,19 +2105,12 @@ public class Camera extends NoSearchActivity implements View.OnClickListener,
 
     private boolean switchCameraDevice(boolean switchToSecondary) {
         if (isFinishing() || !isCameraIdle()) return false;
-        stopPreview();
-        finalizeHeadUpDisplay();
-        closeCamera();
-        CameraHolder holder = CameraHolder.instance();
-        holder.setCameraNode(switchToSecondary ? 
+        CameraHolder.instance().setCameraNode(switchToSecondary ?
                 CameraSwitch.SWITCH_CAMERA_SECONDARY : CameraSwitch.SWITCH_CAMERA_MAIN);
-        mPreferences = getSharedPreferences(holder.getCameraNode(), Context.MODE_PRIVATE);
-        restartPreview();
-        initializeHeadUpDisplay();
-        MenuHelper.updateSwitchDeviceMenuItem(mOptionsMenu, !switchToSecondary);
+        MenuHelper.gotoCameraMode(this);
         return true;
     }
-    
+
     private boolean switchToVideoMode() {
         if (isFinishing() || !isCameraIdle()) return false;
         MenuHelper.gotoVideoMode(this);

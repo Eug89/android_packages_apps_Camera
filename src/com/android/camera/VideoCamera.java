@@ -22,6 +22,7 @@ import com.android.camera.ui.CamcorderHeadUpDisplay;
 import com.android.camera.ui.GLRootView;
 import com.android.camera.ui.GLView;
 import com.android.camera.ui.HeadUpDisplay;
+import com.android.camera.ui.ZoomController;
 
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
@@ -89,11 +90,9 @@ import java.util.StringTokenizer;
 /**
  * The Camcorder activity.
  */
-public class VideoCamera extends NoSearchActivity
-        implements View.OnClickListener,
-        ShutterButton.OnShutterButtonListener, SurfaceHolder.Callback,
+public class VideoCamera extends BaseCamera implements
         MediaRecorder.OnErrorListener, MediaRecorder.OnInfoListener,
-        Switcher.OnSwitchListener, PreviewFrameLayout.OnSizeChangedListener {
+        PreviewFrameLayout.OnSizeChangedListener {
 
     private static final String TAG = "videocamera";
 
@@ -137,7 +136,6 @@ public class VideoCamera extends NoSearchActivity
     private SurfaceHolder mSurfaceHolder = null;
     private ImageView mVideoFrame;
     private GLRootView mGLRootView;
-    private CamcorderHeadUpDisplay mHeadUpDisplay;
 
     private boolean mIsVideoCaptureIntent;
     private boolean mQuickCapture;
@@ -258,9 +256,9 @@ public class VideoCamera extends NoSearchActivity
 	*/
 
         VIDEOQUALITY_BITRATE_TABLE.put("1280x720", 6000000);
-        VIDEOQUALITY_BITRATE_TABLE.put("720x480",  2000000);
-        VIDEOQUALITY_BITRATE_TABLE.put("800x480",  2000000);
-        VIDEOQUALITY_BITRATE_TABLE.put("640x480",  2000000);
+        VIDEOQUALITY_BITRATE_TABLE.put("720x480",  3000000);
+        VIDEOQUALITY_BITRATE_TABLE.put("800x480",  3000000);
+        VIDEOQUALITY_BITRATE_TABLE.put("640x480",  1600000);
         VIDEOQUALITY_BITRATE_TABLE.put("352x288",  360000);
         VIDEOQUALITY_BITRATE_TABLE.put("320x240",  320000);
         VIDEOQUALITY_BITRATE_TABLE.put("176x144",  192000);
@@ -269,9 +267,6 @@ public class VideoCamera extends NoSearchActivity
 
     // The video duration limit. 0 menas no limit.
     private int mMaxVideoDurationInMs;
-
-    boolean mPausing = false;
-    boolean mPreviewing = false; // True if preview is started.
 
     private ContentResolver mContentResolver;
 
@@ -283,9 +278,7 @@ public class VideoCamera extends NoSearchActivity
     private final ArrayList<MenuItem> mGalleryItems = new ArrayList<MenuItem>();
 
     private final Handler mHandler = new MainHandler();
-    private Parameters mParameters;
-    private Menu mOptionsMenu;
-    
+
     // This Handler is used to post message back onto the main thread of the
     // application
     private class MainHandler extends Handler {
@@ -478,6 +471,8 @@ public class VideoCamera extends NoSearchActivity
         } catch (InterruptedException ex) {
             // ignore
         }
+
+        initializeZoom();
     }
 
     private void overrideHudSettings(final String videoEncoder,
@@ -536,7 +531,7 @@ public class VideoCamera extends NoSearchActivity
         mGLRootView = new GLRootView(this);
         frame.addView(mGLRootView);
 
-        mHeadUpDisplay = new CamcorderHeadUpDisplay(this);
+        mHeadUpDisplay = new CamcorderHeadUpDisplay(this, CameraSettings.isVideoZoomSupported(mParameters));
         CameraSettings settings = new CameraSettings(this, mParameters);
 
         PreferenceGroup group =
@@ -547,6 +542,21 @@ public class VideoCamera extends NoSearchActivity
         mHeadUpDisplay.initialize(this, group);
         mGLRootView.setContentPane(mHeadUpDisplay);
         mHeadUpDisplay.setListener(new MyHeadUpDisplayListener());
+
+        if (mParameters.isZoomSupported()) {
+            mHeadUpDisplay.setZoomRatios(getZoomRatios());
+            mHeadUpDisplay.setZoomIndex(mZoomValue);
+            mHeadUpDisplay.setZoomListener(new ZoomController.ZoomListener() {
+                public void onZoomChanged(
+                        final int index, float ratio, boolean isMoving) {
+                    mHandler.post(new Runnable() {
+                        public void run() {
+                            onZoomValueChanged(index);
+                        }
+                    });
+                }
+            });
+        }
         updateProfileInHud();
     }
 
@@ -598,6 +608,7 @@ public class VideoCamera extends NoSearchActivity
     }
 
     private void onStopVideoRecording(boolean valid) {
+        ((CamcorderHeadUpDisplay)mHeadUpDisplay).setVideoQualityControlsEnabled(true);
         if (mIsVideoCaptureIntent) {
             if (mQuickCapture) {
                 stopVideoRecordingAndReturn(valid);
@@ -828,7 +839,7 @@ public class VideoCamera extends NoSearchActivity
     }
 
     private void startPreview() throws CameraHardwareException {
-        Log.v(TAG, "startPreview");
+        Log.d(TAG, "startPreview");
         if (mPreviewing) {
             // After recording a video, preview is not stopped. So just return.
             return;
@@ -851,13 +862,6 @@ public class VideoCamera extends NoSearchActivity
             closeCamera();
             throw new RuntimeException("startPreview failed", ex);
         }
-
-        // If setPreviewDisplay has been set with a valid surface, unlock now.
-        // If surface is null, unlock later. Otherwise, setPreviewDisplay in
-        // surfaceChanged will fail.
-        if (mSurfaceHolder != null) {
-            mCameraDevice.unlock();
-        }
     }
 
     private void closeCamera() {
@@ -866,7 +870,7 @@ public class VideoCamera extends NoSearchActivity
             Log.d(TAG, "already stopped.");
             return;
         }
-        // If we don't lock the camera, release() will fail.
+        releaseMediaRecorder();
         mCameraDevice.lock();
         CameraHolder.instance().release();
         mCameraDevice = null;
@@ -975,6 +979,7 @@ public class VideoCamera extends NoSearchActivity
     }
 
     public void surfaceChanged(SurfaceHolder holder, int format, int w, int h) {
+        Log.d(TAG, "surfaceChanged");
         // Make sure we have a surface in the holder before proceeding.
         if (holder.getSurface() == null) {
             Log.d(TAG, "holder.getSurface() == null");
@@ -1006,6 +1011,8 @@ public class VideoCamera extends NoSearchActivity
             setPreviewDisplay(holder);
             mCameraDevice.unlock();
             mHandler.sendEmptyMessage(INIT_RECORDER);
+        } else {
+            mCameraDevice.unlock();
         }
     }
 
@@ -1085,8 +1092,6 @@ public class VideoCamera extends NoSearchActivity
             }
         }
     }
-
-    private android.hardware.Camera mCameraDevice;
 
     // Prepares media recorder.
     private void initializeRecorder() {
@@ -1197,7 +1202,7 @@ public class VideoCamera extends NoSearchActivity
     }
 
     private void releaseMediaRecorder() {
-        Log.v(TAG, "Releasing media recorder.");
+        Log.d(TAG, "releaseMediaRecorder");
         if (mMediaRecorder != null) {
             cleanupEmptyFile();
             mMediaRecorder.reset();
@@ -1382,7 +1387,7 @@ public class VideoCamera extends NoSearchActivity
                 Log.e(TAG, "Could not start media recorder. ", e);
                 return;
             }
-            mHeadUpDisplay.setEnabled(false);
+            ((CamcorderHeadUpDisplay)mHeadUpDisplay).setVideoQualityControlsEnabled(false);
 
             mMediaRecorderRecording = true;
             mRecordingStartTime = SystemClock.uptimeMillis();
@@ -1710,10 +1715,18 @@ public class VideoCamera extends NoSearchActivity
         if (mParameters.getMaxBrightness() > 0) {
             mParameters.setBrightness(Float.parseFloat(brightness));
         }
-         
+
         CameraSettings.setCamMode(mParameters, CameraSettings.VIDEO_MODE);
-        Log.d(TAG, mParameters.flatten());
-        mCameraDevice.setParameters(mParameters);
+        setCameraHardwareParameters();
+    }
+
+    protected void setCameraHardwareParameters() {
+        CameraSettings.dumpParameters(mParameters);
+        if (mMediaRecorder != null) {
+            mMediaRecorder.setCameraParameters(mParameters.flatten());
+        } else {
+            mCameraDevice.setParameters(mParameters);
+        }
     }
 
     private boolean switchToCameraMode() {
@@ -1757,52 +1770,35 @@ public class VideoCamera extends NoSearchActivity
         if (sizeChanged) {
             // It is assumed media recorder is released before
             // onSharedPreferenceChanged, so we can close the camera here.
+            mCameraDevice.stopPreview();
+            releaseMediaRecorder();
             closeCamera();
             try {
                 resizeForPreviewAspectRatio();
+                mHandler.sendEmptyMessage(RELOAD_HUD);
                 startPreview(); // Parameters will be set in startPreview().
             } catch (CameraHardwareException e) {
                 showCameraBusyAndFinish();
             }
         } else {
-            try {
-                // We need to lock the camera before writing parameters.
-                mCameraDevice.lock();
-            } catch (RuntimeException e) {
-                // When preferences are added for the first time, this method
-                // will be called. But OnScreenSetting is not displayed yet and
-                // media recorder still owns the camera. Lock will fail and we
-                // just ignore it.
-                return;
-            }
             setCameraParameters();
-            mCameraDevice.unlock();
         }
     }
     
     private boolean switchCameraDevice(boolean switchToSecondary) {
         if (isFinishing() || mMediaRecorderRecording) return false;
-        
-        releaseMediaRecorder();
-        closeCamera();
-        finalizeHeadUpDisplay();
-
-        CameraHolder holder = CameraHolder.instance();
-        holder.setCameraNode(switchToSecondary ? 
+        CameraHolder.instance().setCameraNode(switchToSecondary ?
                 CameraSwitch.SWITCH_CAMERA_SECONDARY : CameraSwitch.SWITCH_CAMERA_MAIN);
-        mPreferences = getSharedPreferences(holder.getCameraNode(), Context.MODE_PRIVATE);
-        readVideoPreferences();
-        try {
-            startPreview(); // Parameters will be set in startPreview().
-        } catch (CameraHardwareException e) {
-            showCameraBusyAndFinish();
-        }
-        mHandler.sendEmptyMessage(INIT_RECORDER);
-        initializeHeadUpDisplay();
-        MenuHelper.updateSwitchDeviceMenuItem(mOptionsMenu, !switchToSecondary);
+        MenuHelper.gotoVideoMode(this);
         return true;
     }
-    
+
+    protected void onZoomValueChanged(int index) {
+        mZoomValue = index;
+        mParameters.setZoom(index);
+        setCameraHardwareParameters();
+    }
+
     public void onSizeChanged() {
         // TODO: update the content on GLRootView
     }
@@ -1834,11 +1830,9 @@ public class VideoCamera extends NoSearchActivity
     }
 
     private void onPopupWindowVisibilityChanged(int visibility) {
-        if (visibility == GLView.VISIBLE) {
-            releaseMediaRecorder();
-        } else {
-            if (!mPausing && mSurfaceHolder != null) initializeRecorder();
-        }
+        if (visibility != GLView.VISIBLE && !mPausing && mSurfaceHolder != null) {
+           initializeRecorder();
+         }
     }
 
     private void onRestorePreferencesClicked() {
@@ -1864,4 +1858,6 @@ public class VideoCamera extends NoSearchActivity
             resetCameraParameters();
         }
     }
+
+
 }
